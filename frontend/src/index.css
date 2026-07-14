@@ -1,65 +1,68 @@
-/* RootSight Custom Design System Stylesheet */
-
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap');
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
-html, body {
-  margin: 0;
-  padding: 0;
-  background-color: #070b13;
-  color: #cbd5e1;
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-}
-
-/* Custom scrollbars for code snippets and timeline containers */
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
-
-::-webkit-scrollbar-track {
-  background: #0c1221;
-}
-
-::-webkit-scrollbar-thumb {
-  background: #1e293b;
-  border-radius: 3px;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: #334155;
-}
-
-/* Custom code block styling */
-pre, code {
-  font-family: 'JetBrains Mono', source-code-pro, Menlo, Monaco, Consolas, monospace !important;
-}
-
-/* Animation utilities */
-@keyframes pulse {
-  0%, 100% {
-    opacity: 1;
-    transform: scale(1);
+@layer base {
+  html {
+    font-family: 'Inter', system-ui, sans-serif;
+    background-color: #080b12;
+    color: #cbd5e1;
   }
-  50% {
-    opacity: .5;
-    transform: scale(0.9);
+
+  * {
+    box-sizing: border-box;
+  }
+
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: #0f1117;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: #1e293b;
+    border-radius: 3px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: #334155;
   }
 }
 
-.animate-pulse {
-  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
-}
+@layer components {
+  .glass-card {
+    @apply bg-slate-900/60 border border-slate-800 rounded-xl backdrop-blur-sm;
+  }
 
-/* Simple utility wrappers for custom CSS styling if tailwind classes compile */
-.bg-glass {
-  background: rgba(12, 18, 33, 0.7);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border: 1px solid rgba(255, 255, 255, 0.05);
-}
+  .badge-critical {
+    @apply inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-red-500/10 text-red-400 border border-red-500/20;
+  }
 
-.glow-cyan {
-  box-shadow: 0 0 15px rgba(6, 182, 212, 0.15);
+  .badge-warning {
+    @apply inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/20;
+  }
+
+  .badge-info {
+    @apply inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-slate-500/10 text-slate-400 border border-slate-700;
+  }
+
+  .badge-success {
+    @apply inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20;
+  }
+
+  .btn-primary {
+    @apply inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-sm transition-all shadow-lg shadow-indigo-600/20 hover:shadow-indigo-500/30 active:scale-95;
+  }
+
+  .btn-ghost {
+    @apply inline-flex items-center gap-2 px-4 py-2 rounded-lg text-slate-300 hover:text-white hover:bg-slate-800 font-medium text-sm transition-all active:scale-95;
+  }
+
+  .input-base {
+    @apply w-full bg-slate-900 border border-slate-700/60 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition-colors;
+  }
 }
