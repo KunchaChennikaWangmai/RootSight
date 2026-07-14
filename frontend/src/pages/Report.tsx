@@ -26,7 +26,7 @@ import type {
 // ─── Sub-components ────────────────────────────────────────────────────────
 
 function ConfidenceRing({ score }: { score: number }) {
-    const pct = Math.round(score * 100);
+    const pct = Math.round(score > 1 ? score : score * 100);
     const r = 40;
     const circ = 2 * Math.PI * r;
     const dash = (pct / 100) * circ;
@@ -129,27 +129,29 @@ async function exportPDF(report: InvestigationReportResponse) {
 
     if (report.hypothesis) {
         addTitle('Root Cause Overview', 13);
-        addText(report.hypothesis.sre_summary || 'No overview summary available.');
+        addText(report.hypothesis.executive_summary || 'No overview summary available.');
         addGap();
 
         addTitle('Ranked Outage Hypotheses', 13);
-        const hypotheses = (report.hypothesis as any).top_hypotheses || [];
-        hypotheses.forEach((h: any) => {
-            addTitle(`Rank #${h.rank}: ${h.probable_root_cause}`, 11);
-            addText(`Confidence Score: ${Math.round(h.confidence_score * 100)}%`, 9, 8);
+        const primary = report.hypothesis.primary_hypothesis;
+        if (primary) {
+            addTitle(`Rank #1 (Primary): ${primary.probable_root_cause}`, 11);
+            addText(`Confidence Score: ${primary.confidence_score}%`, 9, 8);
+            addText('Supporting Evidence:', 9, 8);
+            (primary.supporting_evidence || []).forEach((ev: string) => addText(`• ${ev}`, 8, 16));
+            addText(`Alternative Rejection Logic: ${primary.rejected_alternative_hypotheses?.join(', ') || 'N/A'}`, 9, 8);
+            addGap(8);
+        }
+
+        const secondaries = report.hypothesis.secondary_hypotheses || [];
+        secondaries.forEach((h: any) => {
+            addTitle(`Rank #${h.rank || 2}: ${h.probable_root_cause}`, 11);
+            addText(`Confidence Score: ${h.confidence_score}%`, 9, 8);
             addText('Supporting Evidence:', 9, 8);
             (h.supporting_evidence || []).forEach((ev: string) => addText(`• ${ev}`, 8, 16));
-            addText(`Alternative Rejection Logic: ${h.alternative_rejected_reason || 'N/A'}`, 9, 8);
+            addText(`Alternative Rejection Logic: ${h.rejected_alternative_hypotheses?.join(', ') || 'N/A'}`, 9, 8);
             addGap(8);
         });
-
-        const assumptions = (report.hypothesis as any).key_assumptions || [];
-        if (assumptions.length) {
-            addGap(6);
-            addTitle('Operational key Assumptions', 11);
-            assumptions.forEach((a: string) => addText(`• ${a}`, 9, 8));
-            addGap();
-        }
     }
 
     if (report.findings?.length) {
@@ -226,7 +228,8 @@ export default function ReportPage() {
         );
 
     const { hypothesis, evidence, recommendations, findings, timeline } = report;
-    const topHypothesis = hypothesis && (hypothesis as any).top_hypotheses?.[0];
+    const primaryHypothesis = hypothesis?.primary_hypothesis;
+    const secondaryHypotheses = hypothesis?.secondary_hypotheses || [];
 
     return (
         <div className="max-w-4xl mx-auto space-y-5">
@@ -283,10 +286,10 @@ export default function ReportPage() {
                                     <span className="badge-success">{report.status}</span>
                                 </div>
                             </>
-                        ) : topHypothesis ? (
+                        ) : primaryHypothesis ? (
                             <>
-                                <p className="text-sm font-bold text-white">{topHypothesis.probable_root_cause}</p>
-                                <p className="text-xs text-slate-400 mt-1">{(hypothesis as any).sre_summary}</p>
+                                <p className="text-sm font-bold text-white">{primaryHypothesis.probable_root_cause}</p>
+                                <p className="text-xs text-slate-400 mt-1">{hypothesis.executive_summary}</p>
                                 <div className="mt-3">
                                     <span className="badge-success">{report.status}</span>
                                 </div>
@@ -295,7 +298,7 @@ export default function ReportPage() {
                             <p className="text-sm text-slate-500">No root cause identified.</p>
                         )}
                     </div>
-                    {topHypothesis && <ConfidenceRing score={topHypothesis.confidence_score} />}
+                    {primaryHypothesis && <ConfidenceRing score={primaryHypothesis.confidence_score} />}
                 </div>
             </motion.div>
 
@@ -312,32 +315,38 @@ export default function ReportPage() {
                     <div className="space-y-6">
                         <div className="p-4 bg-indigo-500/5 border border-indigo-500/10 rounded-lg">
                             <h4 className="text-xs font-semibold text-indigo-400 uppercase tracking-wider mb-1">Senior SRE Synthesis</h4>
-                            <p className="text-sm text-slate-200 leading-relaxed font-sans">{(hypothesis as any).sre_summary}</p>
+                            <p className="text-sm text-slate-200 leading-relaxed font-sans">{hypothesis.executive_summary}</p>
                         </div>
 
                         <div className="space-y-4">
                             <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Top Probable Root Causes</h4>
-                            {((hypothesis as any).top_hypotheses || []).map((h: any, i: number) => (
-                                <div key={i} className="border border-slate-800/80 rounded-lg p-4 bg-slate-900/40 relative overflow-hidden">
+
+                            {/* Primary Hypothesis */}
+                            {primaryHypothesis && (
+                                <div className="border border-indigo-500/30 rounded-lg p-4 bg-slate-900/40 relative overflow-hidden">
                                     <div className="absolute top-0 right-0 w-24 h-24 translate-x-6 -translate-y-6 bg-indigo-500/5 rounded-full blur-xl pointer-events-none" />
 
                                     <div className="flex items-start gap-3 mb-3">
                                         <div className="shrink-0 flex items-center justify-center w-6 h-6 rounded-full bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 font-bold text-xs mt-0.5">
-                                            #{h.rank}
+                                            #1
                                         </div>
                                         <div>
-                                            <h5 className="text-sm font-bold text-white leading-snug">{h.probable_root_cause}</h5>
+                                            <h5 className="text-sm font-bold text-white leading-snug">{primaryHypothesis.probable_root_cause}</h5>
                                             <p className="text-[10px] text-amber-400/90 font-semibold mt-1 font-mono uppercase tracking-wide">
-                                                Confidence Factor: {Math.round(h.confidence_score * 100)}%
+                                                Confidence Factor: {primaryHypothesis.confidence_score}%
                                             </p>
                                         </div>
                                     </div>
 
+                                    <p className="text-xs text-slate-350 bg-slate-950/20 p-2.5 rounded border border-slate-800/40 italic leading-relaxed mt-2 mb-3">
+                                        <strong>Why This Is Likely:</strong> {primaryHypothesis.why_this_is_likely}
+                                    </p>
+
                                     <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4 border-t border-slate-800/60 pt-3">
                                         <div>
                                             <p className="text-[11px] font-semibold text-indigo-300 uppercase tracking-wider mb-2">Supporting Evidence</p>
-                                            <ul className="space-y-1.5">
-                                                {(h.supporting_evidence || []).map((ev: string, idx: number) => (
+                                            <ul className="space-y-1.5 font-sans">
+                                                {(primaryHypothesis.supporting_evidence || []).map((ev: string, idx: number) => (
                                                     <li key={idx} className="flex gap-2 text-xs text-slate-300">
                                                         <span className="text-indigo-400 font-mono mt-0.5">•</span>
                                                         <span>{ev}</span>
@@ -347,33 +356,76 @@ export default function ReportPage() {
                                         </div>
                                         <div className="bg-slate-950/45 p-3 rounded-lg border border-slate-800/40">
                                             <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-1.5">Alternative Rejection Logic</p>
-                                            <p className="text-xs text-slate-450 leading-relaxed italic">{h.alternative_rejected_reason}</p>
+                                            <ul className="space-y-1">
+                                                {(primaryHypothesis.rejected_alternative_hypotheses || []).map((rej: string, idx: number) => (
+                                                    <li key={idx} className="text-xs text-slate-400 italic flex gap-1.5 align-top">
+                                                        <span className="text-slate-600 font-mono">•</span>
+                                                        <span>{rej}</span>
+                                                    </li>
+                                                ))}
+                                            </ul>
                                         </div>
                                     </div>
 
-                                    {h.recommended_remediations && h.recommended_remediations.length > 0 && (
+                                    {primaryHypothesis.recommended_actions && primaryHypothesis.recommended_actions.length > 0 && (
                                         <div className="mt-4 border-t border-slate-800/60 pt-3">
-                                            <p className="text-[11px] font-semibold text-emerald-400 uppercase tracking-wider mb-2 font-mono">Cause-Specific Remediation Paths</p>
-                                            <div className="space-y-2">
-                                                {h.recommended_remediations.map((rem: any, idx: number) => (
-                                                    <div key={idx} className="bg-emerald-500/5 border border-emerald-500/10 rounded p-2.5 flex flex-col gap-1.5">
-                                                        <div className="flex items-center justify-between">
-                                                            <span className="text-[10px] font-bold text-emerald-400 uppercase tracking-wide px-1.5 py-0.5 rounded bg-emerald-500/15 border border-emerald-500/25">
-                                                                {rem.action_type}
-                                                            </span>
-                                                            <span className="text-[9px] text-slate-500">Risk: {rem.risk_level}</span>
-                                                        </div>
-                                                        <p className="text-xs text-slate-300">{rem.description}</p>
-                                                        {rem.command_or_code && (
-                                                            <pre className="text-[10px] font-mono bg-black/40 border border-slate-800 rounded p-1.5 overflow-x-auto text-cyan-300 mt-1">
-                                                                {rem.command_or_code}
-                                                            </pre>
-                                                        )}
-                                                    </div>
+                                            <p className="text-[11px] font-semibold text-emerald-400 uppercase tracking-wider mb-2 font-mono">Recommended Remediation Checklist</p>
+                                            <ul className="space-y-1.5">
+                                                {primaryHypothesis.recommended_actions.map((act: string, idx: number) => (
+                                                    <li key={idx} className="text-xs text-slate-300 flex items-start gap-2 bg-emerald-500/5 border border-emerald-500/10 p-2 rounded">
+                                                        <CheckCircle2 className="w-4 h-4 text-emerald-500 mt-0.5 shrink-0" />
+                                                        <span>{act}</span>
+                                                    </li>
                                                 ))}
-                                            </div>
+                                            </ul>
                                         </div>
                                     )}
+                                </div>
+                            )}
+
+                            {/* Secondary Hypotheses */}
+                            {secondaryHypotheses.map((h: any, i: number) => (
+                                <div key={i} className="border border-slate-800/80 rounded-lg p-4 bg-slate-900/40 relative overflow-hidden">
+                                    <div className="flex items-start gap-3 mb-3">
+                                        <div className="shrink-0 flex items-center justify-center w-6 h-6 rounded-full bg-slate-800 border border-slate-700 text-slate-400 font-bold text-xs mt-0.5">
+                                            #{h.rank || i + 2}
+                                        </div>
+                                        <div>
+                                            <h5 className="text-sm font-bold text-slate-200 leading-snug">{h.probable_root_cause}</h5>
+                                            <p className="text-[10px] text-slate-400 font-semibold mt-1 font-mono uppercase tracking-wide">
+                                                Confidence Factor: {h.confidence_score}%
+                                            </p>
+                                        </div>
+                                    </div>
+
+                                    <p className="text-xs text-slate-400 bg-slate-950/20 p-2.5 rounded border border-slate-800/50 italic leading-relaxed mt-2 mb-3">
+                                        <strong>Why This Is Likely:</strong> {h.why_this_is_likely}
+                                    </p>
+
+                                    <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4 border-t border-slate-800/60 pt-3">
+                                        <div>
+                                            <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-2">Supporting Evidence</p>
+                                            <ul className="space-y-1.5 font-sans">
+                                                {(h.supporting_evidence || []).map((ev: string, idx: number) => (
+                                                    <li key={idx} className="flex gap-2 text-xs text-slate-400">
+                                                        <span className="text-slate-500 font-mono mt-0.5">•</span>
+                                                        <span>{ev}</span>
+                                                    </li>
+                                                ))}
+                                            </ul>
+                                        </div>
+                                        <div className="bg-slate-950/45 p-3 rounded-lg border border-slate-800/40">
+                                            <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-1.5">Alternative Rejection Logic</p>
+                                            <ul className="space-y-1">
+                                                {(h.rejected_alternative_hypotheses || []).map((rej: string, idx: number) => (
+                                                    <li key={idx} className="text-xs text-slate-450 italic flex gap-1.5 align-top">
+                                                        <span className="text-slate-650">•</span>
+                                                        <span>{rej}</span>
+                                                    </li>
+                                                ))}
+                                            </ul>
+                                        </div>
+                                    </div>
                                 </div>
                             ))}
                         </div>

@@ -71,18 +71,19 @@ class CorrelationEvidenceMap(BaseModel):
     grouped_findings: List[AnalysisFinding] = Field(default_factory=list, description="All parsed findings across modules")
     events_timeline: List[CorrelatedEvidence] = Field(default_factory=list, description="Chronological log and metrics intersections")
 
-class HypothesisItem(BaseModel):
-    rank: int = Field(..., description="1, 2, or 3 ranking of probability")
-    probable_root_cause: str = Field(..., description="Detailed description of the hypothesis")
-    confidence_score: float = Field(..., description="Confidence score from 0.0 to 1.0")
-    supporting_evidence: List[str] = Field(..., description="Exact observations from specific agents supporting this hypothesis")
-    alternative_rejected_reason: str = Field(..., description="Why this hypothesis is favored over others, or why alternative hypotheses are rejected")
-    recommended_remediations: List[RecommendedAction] = Field(default_factory=list, description="Actions directly targeted to address this specific cause")
+class HypothesisDetail(BaseModel):
+    rank: int = Field(..., description="Likelihood rank starting at 1")
+    probable_root_cause: str = Field(..., description="Root cause detail description")
+    confidence_score: int = Field(..., description="Confidence score from 0 to 100")
+    why_this_is_likely: str = Field(..., description="Detailed explanation why this hypothesis is likely")
+    supporting_evidence: List[str] = Field(default_factory=list, description="List of supporting evidence citations")
+    rejected_alternative_hypotheses: List[str] = Field(default_factory=list, description="List of rejected alternative hypotheses with reasons")
+    recommended_actions: List[str] = Field(default_factory=list, description="Recommended remediation actions")
 
 class HypothesisOutput(BaseModel):
-    top_hypotheses: List[HypothesisItem] = Field(..., min_items=1, max_items=3, description="Ranked list of top 3 probable root causes")
-    sre_summary: str = Field(..., description="Senior SRE synthesis summary of the incident")
-    key_assumptions: List[str] = Field(default_factory=list, description="Key SRE assumptions made during the analysis")
+    executive_summary: str = Field(..., description="Senior SRE executive synthesis of the incident")
+    primary_hypothesis: HypothesisDetail = Field(..., description="The main most probable root cause hypothesis")
+    secondary_hypotheses: List[HypothesisDetail] = Field(default_factory=list, description="List of alternative second/third ranked hypotheses")
 
 class ReportJSON(BaseModel):
     incident_id: str = Field(..., description="Unique generated identifier")
@@ -92,6 +93,75 @@ class ReportJSON(BaseModel):
     evidence_summary: CorrelationEvidenceMap = Field(..., description="Grouped evidence details")
     hypothesis: HypothesisOutput = Field(..., description="LLM evaluated root cause hypothesis")
     remediation_recommendations: List[RecommendedAction] = Field(default_factory=list)
+
+# Structured SRE Evidence schemas
+class LogExceptionDetail(BaseModel):
+    type: str = Field(..., description="Exception class type")
+    class_name: str = Field(..., alias="class", description="Target class containing the throw")
+    method: str = Field(..., description="Target method containing the throw")
+    line: int = Field(..., description="Line number of exception frame")
+    occurrences: int = Field(..., description="Frequency of this exception")
+
+    class Config:
+        allow_population_by_field_name = True
+        populate_by_name = True
+
+class LogEvidenceDetail(BaseModel):
+    exceptions: List[LogExceptionDetail] = Field(default_factory=list)
+    payment_failures: int = Field(0, description="Number of observed payment failures")
+    circuit_breaker_triggered: bool = Field(False, description="Whether circuit breaker triggered during incident")
+    cache_initialization_delayed: bool = Field(False, description="Whether cache loading initialized late")
+
+class MetricsEvidenceDetail(BaseModel):
+    cpu_before: Optional[float] = Field(None, description="CPU usage before outbreak")
+    cpu_after: Optional[float] = Field(None, description="CPU usage peak during outage")
+    latency_before: Optional[float] = Field(None, description="API Latency average before incident")
+    latency_after: Optional[float] = Field(None, description="API Latency average peak during incident")
+    error_rate_before: Optional[float] = Field(None, description="Error rate before incident")
+    error_rate_after: Optional[float] = Field(None, description="Error rate peak during incident")
+
+class DeploymentEvidenceDetail(BaseModel):
+    deployment_version: Optional[str] = Field(None, description="Deployed revision version tag")
+    deployment_completed: bool = Field(False, description="Whether deployment finished booting successfully")
+    deployment_timestamp: Optional[str] = Field(None, description="UTC time deployment finalized")
+
+class StackEvidenceDetail(BaseModel):
+    exception_type: Optional[str] = Field(None, description="The type of exception captured in stacktrace")
+    class_name: Optional[str] = Field(None, alias="class", description="Target class containing the throw")
+    method: Optional[str] = Field(None, description="Target method containing the throw")
+    line: Optional[int] = Field(None, description="Line number containing the throw")
+
+    class Config:
+        allow_population_by_field_name = True
+        populate_by_name = True
+
+class IncidentSummaryDetail(BaseModel):
+    service: str = Field(..., description="Service name where the issue occurred")
+    environment: str = Field(..., description="Target environment (e.g. production, staging)")
+    deployment_version: str = Field(..., description="Deployed semantic release version or commit hash")
+
+class CorrelationItem(BaseModel):
+    type: str = Field(..., description="Correlation pattern type")
+    description: str = Field(..., description="Details and observations of the correlated systems")
+
+class InvestigationEvidence(BaseModel):
+    incident_summary: Optional[IncidentSummaryDetail] = None
+    timeline: List[CorrelatedEvidence] = Field(default_factory=list)
+    exceptions: List[LogExceptionDetail] = Field(default_factory=list)
+    metrics: Optional[MetricsEvidenceDetail] = None
+    deployment: Optional[DeploymentEvidenceDetail] = None
+    correlations: List[CorrelationItem] = Field(default_factory=list)
+    recommended_focus: List[str] = Field(default_factory=list)
+
+class ReportJSON(BaseModel):
+    incident_id: str = Field(..., description="Unique generated identifier")
+    title: str = Field(..., description="Incident title")
+    status: str = Field("COMPLETED")
+    analysis_completed_at: datetime = Field(default_factory=datetime.now)
+    evidence_summary: CorrelationEvidenceMap = Field(..., description="Grouped evidence details")
+    hypothesis: HypothesisOutput = Field(..., description="LLM evaluated root cause hypothesis")
+    remediation_recommendations: List[RecommendedAction] = Field(default_factory=list)
+    investigation_evidence: Optional[InvestigationEvidence] = Field(None, description="Unified structured JSON evidence")
 
 # Primary Response Model
 class InvestigationReportResponse(BaseModel):
@@ -107,4 +177,5 @@ class InvestigationReportResponse(BaseModel):
     evidence: Optional[CorrelationEvidenceMap] = Field(None, description="Structured evidence object")
     hypothesis: Optional[HypothesisOutput] = Field(None, description="Structured hypothesis evaluation")
     report_json: Optional[ReportJSON] = Field(None, description="Final structured JSON report")
+    investigation_evidence: Optional[InvestigationEvidence] = Field(None, description="Unified structured JSON evidence")
 

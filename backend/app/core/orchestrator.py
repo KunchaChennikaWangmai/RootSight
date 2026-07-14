@@ -81,11 +81,10 @@ def run_incident_investigation(incident_id: str, payload: IncidentPayload) -> In
         
         # Conditional routers from Planner
         def route_planner(state: IncidentState):
-            # Only execute log_analysis or bypass stack/metrics/deployment for now
             destinations = []
-            if "log_analysis" in state["agents_to_run"]:
-                destinations.append("log_analysis")
-            # If nothing matches, go directly to correlation
+            for agent in ["log_analysis", "stack_analysis", "metrics_analysis", "deployment_analysis"]:
+                if agent in state["agents_to_run"]:
+                    destinations.append(agent)
             if not destinations:
                 destinations.append("correlation")
             return destinations
@@ -95,12 +94,18 @@ def run_incident_investigation(incident_id: str, payload: IncidentPayload) -> In
             route_planner,
             {
                 "log_analysis": "log_analysis",
+                "stack_analysis": "stack_analysis",
+                "metrics_analysis": "metrics_analysis",
+                "deployment_analysis": "deployment_analysis",
                 "correlation": "correlation"
             }
         )
         
         # Active analytical chains connect to Evidence Correlation Node
         workflow.add_edge("log_analysis", "correlation")
+        workflow.add_edge("stack_analysis", "correlation")
+        workflow.add_edge("metrics_analysis", "correlation")
+        workflow.add_edge("deployment_analysis", "correlation")
         
         # E2E graph timeline pipeline
         workflow.add_edge("correlation", "hypothesis")
@@ -116,13 +121,32 @@ def run_incident_investigation(incident_id: str, payload: IncidentPayload) -> In
         new_vars = run_planner_agent(state)
         state.update(new_vars)
         
-        # Step 2: Run active scheduled analysts (only LogAnalysisAgent is active)
-        if "log_analysis" in state["agents_to_run"]:
-            res = run_log_analyst_agent(state)
-            state["findings"] = res["findings"]
+        # Step 2: Run active scheduled analysts
+        for agent in state["agents_to_run"]:
+            res = {}
+            if agent == "log_analysis":
+                res = run_log_analyst_agent(state)
+            elif agent == "stack_analysis":
+                res = run_stack_analyst_agent(state)
+            elif agent == "metrics_analysis":
+                res = run_metrics_analyst_agent(state)
+            elif agent == "deployment_analysis":
+                res = run_deploy_analyst_agent(state)
+                
+            if res:
+                if "findings" in res:
+                    state["findings"] = state.get("findings", []) + res["findings"]
+                for k, v in res.items():
+                    if k != "findings":
+                        state[k] = v
             
         # Step 3: Run E2E Correlation -> Hypothesis -> Report pipeline
-        state.update(run_correlation_agent(state))
+        corr_res = run_correlation_agent(state)
+        state["findings"] = state.get("findings", []) + corr_res.get("findings", [])
+        for k, v in corr_res.items():
+            if k != "findings":
+                state[k] = v
+                
         state.update(run_hypothesis_agent(state))
         state.update(run_report_agent(state))
         

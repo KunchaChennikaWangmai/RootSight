@@ -21,19 +21,20 @@ export interface CorrelationEvidenceMap {
     events_timeline: CorrelatedEvidence[];
 }
 
-export interface HypothesisItem {
+export interface HypothesisDetail {
     rank: number;
     probable_root_cause: string;
     confidence_score: number;
+    why_this_is_likely: string;
     supporting_evidence: string[];
-    alternative_rejected_reason: string;
-    recommended_remediations: RecommendedAction[];
+    rejected_alternative_hypotheses: string[];
+    recommended_actions: string[];
 }
 
 export interface HypothesisOutput {
-    top_hypotheses: HypothesisItem[];
-    sre_summary: string;
-    key_assumptions: string[];
+    executive_summary: string;
+    primary_hypothesis: HypothesisDetail;
+    secondary_hypotheses: HypothesisDetail[];
 }
 
 export interface RecommendedAction {

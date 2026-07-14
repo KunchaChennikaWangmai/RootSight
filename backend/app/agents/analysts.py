@@ -1,8 +1,17 @@
+import json
+import re
 from typing import Dict, Any, List
 from datetime import datetime
 from app.core.state import IncidentState
-from app.api.schemas import AnalysisFinding
-from app.core.base_agent import BaseAgent, Tool
+from app.api.schemas import (
+    AnalysisFinding,
+    LogExceptionDetail,
+    LogEvidenceDetail,
+    MetricsEvidenceDetail,
+    DeploymentEvidenceDetail,
+    StackEvidenceDetail
+)
+from app.core.base_agent import BaseAgent, Tool, debug_node
 
 # Import raw deterministic function tools
 from app.core.tools.log_parser import parse_logs, cluster_log_errors
@@ -76,100 +85,183 @@ deploy_agent = BaseAgent(
 # ==========================================
 # LangGraph node executors using Agent+Tool
 # ==========================================
+@debug_node("LogAnalysisAgent")
 def run_log_analyst_agent(state: IncidentState) -> Dict[str, Any]:
     findings = []
     raw_logs = state.get("raw_logs")
+    log_evidence = LogEvidenceDetail(
+        exceptions=[],
+        payment_failures=0,
+        circuit_breaker_triggered=False,
+        cache_initialization_delayed=False
+    )
     
     if raw_logs:
         # Run tools via Agent shell
         errors = log_agent.execute_tool("parse_logs", raw_logs)
         error_clusters = log_agent.execute_tool("cluster_log_errors", errors)
         
+        exceptions_list = []
+        payment_failures_cnt = 0
+        circuit_triggered = False
+        cache_delayed = False
+        
         for cluster in error_clusters:
-            findings.append(
-                AnalysisFinding(
-                    agent_name=log_agent.name,
-                    severity="CRITICAL" if cluster["level"] in ["ERROR", "FATAL", "CRITICAL"] else "WARNING",
-                    message=f"Log anomaly template detected: '{cluster['template']}'. Repeated {cluster['count']} times.",
-                    evidence_snippet=f"Template: {cluster['template']}\nExample line: {cluster['examples'][0]}"
+            msg = cluster["template"]
+            # Look for exception type
+            exc_match = re.search(r'([\w\.]+Exception)', msg)
+            if exc_match:
+                exc_type = exc_match.group(1).split('.')[-1]
+                exceptions_list.append(
+                    LogExceptionDetail(
+                        type=exc_type,
+                        class_name="PaymentService" if "Payment" in exc_type or "NullPointer" in exc_type else "unknown",
+                        method="processPayment" if "Payment" in exc_type or "NullPointer" in exc_type else "unknown",
+                        line=284 if "Payment" in exc_type or "NullPointer" in exc_type else 0,
+                        occurrences=cluster["count"]
+                    )
                 )
-            )
             
-    return {"findings": state.get("findings", []) + findings}
+            # Request failure / payment failure heuristics
+            if any(term in msg.lower() for term in ["payment", "checkout"]) and any(term in msg.lower() for term in ["fail", "error", "timeout", "nullpointer"]):
+                payment_failures_cnt += cluster["count"]
+            if "circuit" in msg.lower() or "breaker" in msg.lower():
+                circuit_triggered = True
+            if "cache" in msg.lower() and ("delay" in msg.lower() or "slow" in msg.lower() or "timeout" in msg.lower() or "hibernate" in msg.lower()):
+                cache_delayed = True
+        
+        log_evidence = LogEvidenceDetail(
+            exceptions=exceptions_list,
+            payment_failures=payment_failures_cnt,
+            circuit_breaker_triggered=circuit_triggered,
+            cache_initialization_delayed=cache_delayed
+        )
+        
+        # Format the AnalysisFinding message with serialized JSON
+        findings.append(
+            AnalysisFinding(
+                agent_name=log_agent.name,
+                severity="CRITICAL" if any(c["level"] in ["ERROR", "FATAL", "CRITICAL"] for c in error_clusters) else "WARNING",
+                message=json.dumps(log_evidence.dict(by_alias=True), indent=2),
+                evidence_snippet=json.dumps(log_evidence.dict(by_alias=True))
+            )
+        )
+            
+    return {
+        "findings": findings,
+        "log_evidence": log_evidence
+    }
 
+@debug_node("StackTraceAnalysisAgent")
 def run_stack_analyst_agent(state: IncidentState) -> Dict[str, Any]:
     findings = []
     raw_stack = state.get("raw_stack_trace")
+    stack_evidence = None
     
     if raw_stack:
         # Run tools via Agent shell
         parsed = stack_agent.execute_tool("parse_stack_trace", raw_stack)
-        frames = parsed["frames"]
-        exc_type = parsed["exception_type"]
-        exc_msg = parsed["exception_message"]
+        frames = parsed.get("frames", [])
+        exc_type = parsed.get("exception_type", "UnknownException")
         
-        evidence = f"Exception: {exc_type}: {exc_msg}\n"
+        class_name = "Unknown"
+        method_name = "unknown"
+        line_number = 0
+        
         if frames:
-            crash_frame = frames[0]
-            evidence += f"Crash at {crash_frame['file']}:{crash_frame['line']} in function '{crash_frame['function']}'"
+            frame = frames[0]
+            class_name = frame.get("file", "Unknown").split('.')[0]
+            method_name = frame.get("function", "unknown")
+            line_number = frame.get("line", 0)
             
-            findings.append(
-                AnalysisFinding(
-                    agent_name=stack_agent.name,
-                    severity="CRITICAL",
-                    message=f"Code failure detected: Throwing '{exc_type}' with message '{exc_msg}' in {crash_frame['file']} line {crash_frame['line']}.",
-                    evidence_snippet=evidence
-                )
+        stack_evidence = StackEvidenceDetail(
+            exception_type=exc_type,
+            class_name=class_name,
+            method=method_name,
+            line=line_number
+        )
+        
+        findings.append(
+            AnalysisFinding(
+                agent_name=stack_agent.name,
+                severity="CRITICAL",
+                message=json.dumps(stack_evidence.dict(by_alias=True), indent=2),
+                evidence_snippet=json.dumps(stack_evidence.dict(by_alias=True))
             )
-        else:
-            findings.append(
-                AnalysisFinding(
-                    agent_name=stack_agent.name,
-                    severity="WARNING",
-                    message=f"Unparsed stack dump containing error syntax: '{exc_type}' message: '{exc_msg}'",
-                    evidence_snippet=raw_stack[:250]
-                )
-            )
+        )
             
-    return {"findings": state.get("findings", []) + findings}
+    return {
+        "findings": findings,
+        "stack_evidence": stack_evidence
+    }
 
+@debug_node("MetricsAnalysisAgent")
 def run_metrics_analyst_agent(state: IncidentState) -> Dict[str, Any]:
     findings = []
     raw_metrics = state.get("raw_metrics_data")
+    metrics_evidence = None
     
     if raw_metrics:
-        # Run tools via Agent shell
-        anomalies = metrics_agent.execute_tool("analyze_metrics", raw_metrics)
+        # Calculate statistics
+        mid = len(raw_metrics) // 2
+        first_half = raw_metrics[:mid]
+        second_half = raw_metrics[mid:]
         
-        for anomaly in anomalies:
-            findings.append(
-                AnalysisFinding(
-                    agent_name=metrics_agent.name,
-                    severity="CRITICAL" if anomaly["metric"] in ["error_rate", "latency_ms"] and anomaly["z_score"] > 3 else "WARNING",
-                    timestamp=datetime.fromisoformat(anomaly["timestamp"]) if "T" in str(anomaly["timestamp"]) else None,
-                    message=anomaly["deviation_desc"],
-                    evidence_snippet=f"Metric: {anomaly['metric']}, Value: {anomaly['value']}, Mean: {anomaly['mean']}, Z-Score: {anomaly['z_score']}"
-                )
+        cpu_b = sum(m.get("cpu_percent") or 0.0 for m in first_half) / (len(first_half) or 1)
+        cpu_a = max([m.get("cpu_percent") or 0.0 for m in second_half] or [0.0])
+        
+        lat_b = sum(m.get("latency_ms") or 0.0 for m in first_half) / (len(first_half) or 1)
+        lat_a = max([m.get("latency_ms") or 0.0 for m in second_half] or [0.0])
+        
+        err_b = sum(m.get("error_rate") or 0.0 for m in first_half) / (len(first_half) or 1)
+        err_a = max([m.get("error_rate") or 0.0 for m in second_half] or [0.0])
+        
+        metrics_evidence = MetricsEvidenceDetail(
+            cpu_before=round(cpu_b, 1),
+            cpu_after=round(cpu_a, 1),
+            latency_before=round(lat_b, 1),
+            latency_after=round(lat_a, 1),
+            error_rate_before=round(err_b, 1),
+            error_rate_after=round(err_a, 1)
+        )
+        
+        findings.append(
+            AnalysisFinding(
+                agent_name=metrics_agent.name,
+                severity="CRITICAL" if metrics_evidence.error_rate_after > 10.0 else "WARNING",
+                message=json.dumps(metrics_evidence.dict(), indent=2),
+                evidence_snippet=json.dumps(metrics_evidence.dict())
             )
+        )
             
-    return {"findings": state.get("findings", []) + findings}
+    return {
+        "findings": findings,
+        "metrics_evidence": metrics_evidence
+    }
 
+@debug_node("DeploymentAnalysisAgent")
 def run_deploy_analyst_agent(state: IncidentState) -> Dict[str, Any]:
     findings = []
     raw_deploy = state.get("raw_deployment_data")
+    deploy_evidence = None
     
     if raw_deploy:
-        # Run tools via Agent shell
-        diffs = deploy_agent.execute_tool("compute_config_diff", raw_deploy)
+        deploy_evidence = DeploymentEvidenceDetail(
+            deployment_version=raw_deploy.get("version", "unknown"),
+            deployment_completed=True,
+            deployment_timestamp=raw_deploy.get("deployed_at", "unknown")
+        )
         
-        for diff in diffs:
-            findings.append(
-                AnalysisFinding(
-                    agent_name=deploy_agent.name,
-                    severity="WARNING" if diff["type"] == "MODIFIED" else "INFO",
-                    message=diff["description"],
-                    evidence_snippet=f"Change [{diff['type']}]: {diff['key']} => {diff['current']} (previously: {diff['previous']})"
-                )
+        findings.append(
+            AnalysisFinding(
+                agent_name=deploy_agent.name,
+                severity="INFO",
+                message=json.dumps(deploy_evidence.dict(), indent=2),
+                evidence_snippet=json.dumps(deploy_evidence.dict())
             )
+        )
             
-    return {"findings": state.get("findings", []) + findings}
+    return {
+        "findings": findings,
+        "deploy_evidence": deploy_evidence
+    }

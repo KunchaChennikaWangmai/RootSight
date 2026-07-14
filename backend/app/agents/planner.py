@@ -1,7 +1,9 @@
 from typing import Dict, Any
 from app.core.state import IncidentState
 from app.api.schemas import AnalysisFinding
+from app.core.base_agent import debug_node
 
+@debug_node("PlannerAgent")
 def run_planner_agent(state: IncidentState) -> Dict[str, Any]:
     """
     Planner Agent Node:

@@ -1,4 +1,5 @@
-from typing import TypedDict, List, Dict, Any, Optional
+import operator
+from typing import Annotated, TypedDict, List, Dict, Any, Optional
 from datetime import datetime
 from app.api.schemas import (
     IncidentPayload,
@@ -8,7 +9,12 @@ from app.api.schemas import (
     RecommendedAction,
     CorrelationEvidenceMap,
     HypothesisOutput,
-    ReportJSON
+    ReportJSON,
+    InvestigationEvidence,
+    LogEvidenceDetail,
+    MetricsEvidenceDetail,
+    DeploymentEvidenceDetail,
+    StackEvidenceDetail
 )
 
 class IncidentState(TypedDict):
@@ -26,7 +32,7 @@ class IncidentState(TypedDict):
     focus_areas: List[str]
     
     # Individual Agent Findings outputs (Appended)
-    findings: List[AnalysisFinding]
+    findings: Annotated[List[AnalysisFinding], operator.add]
     
     # Correlation & Synthesis Phase outputs
     timeline: List[CorrelatedEvidence]
@@ -37,6 +43,13 @@ class IncidentState(TypedDict):
     evidence: Optional[CorrelationEvidenceMap]
     hypothesis: Optional[HypothesisOutput]
     report_json: Optional[ReportJSON]
+    investigation_evidence: Optional[InvestigationEvidence]
+    
+    # Individual Agent Evidence schemas (preserves data across nodes in LangGraph)
+    log_evidence: Optional[LogEvidenceDetail]
+    metrics_evidence: Optional[MetricsEvidenceDetail]
+    deploy_evidence: Optional[DeploymentEvidenceDetail]
+    stack_evidence: Optional[StackEvidenceDetail]
     
     # Final Presentation output
     markdown_report: str
