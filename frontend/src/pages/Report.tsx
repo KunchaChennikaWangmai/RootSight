@@ -128,16 +128,28 @@ async function exportPDF(report: InvestigationReportResponse) {
     addGap();
 
     if (report.hypothesis) {
-        addTitle('Root Cause Hypothesis', 13);
-        addText(report.hypothesis.probable_root_cause);
-        addText(`Confidence Score: ${Math.round(report.hypothesis.confidence_score * 100)}%`);
+        addTitle('Root Cause Overview', 13);
+        addText(report.hypothesis.sre_summary || 'No overview summary available.');
         addGap();
-        addTitle('Reasoning', 11);
-        report.hypothesis.reasoning.forEach((r) => addText(`• ${r}`, 9, 8));
-        addGap();
-        addTitle('Assumptions', 11);
-        report.hypothesis.assumptions.forEach((a) => addText(`• ${a}`, 9, 8));
-        addGap();
+
+        addTitle('Ranked Outage Hypotheses', 13);
+        const hypotheses = (report.hypothesis as any).top_hypotheses || [];
+        hypotheses.forEach((h: any) => {
+            addTitle(`Rank #${h.rank}: ${h.probable_root_cause}`, 11);
+            addText(`Confidence Score: ${Math.round(h.confidence_score * 100)}%`, 9, 8);
+            addText('Supporting Evidence:', 9, 8);
+            (h.supporting_evidence || []).forEach((ev: string) => addText(`• ${ev}`, 8, 16));
+            addText(`Alternative Rejection Logic: ${h.alternative_rejected_reason || 'N/A'}`, 9, 8);
+            addGap(8);
+        });
+
+        const assumptions = (report.hypothesis as any).key_assumptions || [];
+        if (assumptions.length) {
+            addGap(6);
+            addTitle('Operational key Assumptions', 11);
+            assumptions.forEach((a: string) => addText(`• ${a}`, 9, 8));
+            addGap();
+        }
     }
 
     if (report.findings?.length) {
@@ -214,6 +226,7 @@ export default function ReportPage() {
         );
 
     const { hypothesis, evidence, recommendations, findings, timeline } = report;
+    const topHypothesis = hypothesis && (hypothesis as any).top_hypotheses?.[0];
 
     return (
         <div className="max-w-4xl mx-auto space-y-5">
@@ -260,20 +273,21 @@ export default function ReportPage() {
                                 <p className="text-xs text-slate-400 mt-1">{report.root_cause.direct_cause}</p>
                                 <div className="mt-3 flex items-center gap-2">
                                     <span className={`badge-${report.root_cause.mitigation_urgency === 'HIGH' || report.root_cause.mitigation_urgency === 'IMMEDIATE'
-                                            ? 'critical'
-                                            : report.root_cause.mitigation_urgency === 'MEDIUM'
-                                                ? 'warning'
-                                                : 'info'
+                                        ? 'critical'
+                                        : report.root_cause.mitigation_urgency === 'MEDIUM'
+                                            ? 'warning'
+                                            : 'info'
                                         }`}>
                                         {report.root_cause.mitigation_urgency} URGENCY
                                     </span>
                                     <span className="badge-success">{report.status}</span>
                                 </div>
                             </>
-                        ) : hypothesis ? (
+                        ) : topHypothesis ? (
                             <>
-                                <p className="text-sm font-bold text-white">{hypothesis.probable_root_cause}</p>
-                                <div className="mt-2">
+                                <p className="text-sm font-bold text-white">{topHypothesis.probable_root_cause}</p>
+                                <p className="text-xs text-slate-400 mt-1">{(hypothesis as any).sre_summary}</p>
+                                <div className="mt-3">
                                     <span className="badge-success">{report.status}</span>
                                 </div>
                             </>
@@ -281,7 +295,7 @@ export default function ReportPage() {
                             <p className="text-sm text-slate-500">No root cause identified.</p>
                         )}
                     </div>
-                    {hypothesis && <ConfidenceRing score={hypothesis.confidence_score} />}
+                    {topHypothesis && <ConfidenceRing score={topHypothesis.confidence_score} />}
                 </div>
             </motion.div>
 
@@ -291,37 +305,92 @@ export default function ReportPage() {
                     title={
                         <span className="flex items-center gap-2">
                             <Lightbulb className="w-4 h-4 text-amber-400" />
-                            Root Cause Hypothesis
+                            Ranked SRE Hypotheses
                         </span>
                     }
                 >
-                    <div className="space-y-4">
-                        <div className="p-4 bg-amber-500/5 border border-amber-500/15 rounded-lg">
-                            <p className="text-sm font-semibold text-white">{hypothesis.probable_root_cause}</p>
+                    <div className="space-y-6">
+                        <div className="p-4 bg-indigo-500/5 border border-indigo-500/10 rounded-lg">
+                            <h4 className="text-xs font-semibold text-indigo-400 uppercase tracking-wider mb-1">Senior SRE Synthesis</h4>
+                            <p className="text-sm text-slate-200 leading-relaxed font-sans">{(hypothesis as any).sre_summary}</p>
                         </div>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                            <div>
-                                <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Reasoning Chain</h4>
-                                <ol className="space-y-1.5">
-                                    {hypothesis.reasoning.map((r, i) => (
-                                        <li key={i} className="flex gap-2 text-xs text-slate-300">
-                                            <span className="shrink-0 text-indigo-400 font-mono">{i + 1}.</span>
-                                            {r}
-                                        </li>
-                                    ))}
-                                </ol>
-                            </div>
-                            <div>
-                                <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Assumptions</h4>
-                                <ul className="space-y-1.5">
-                                    {hypothesis.assumptions.map((a, i) => (
+
+                        <div className="space-y-4">
+                            <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Top Probable Root Causes</h4>
+                            {((hypothesis as any).top_hypotheses || []).map((h: any, i: number) => (
+                                <div key={i} className="border border-slate-800/80 rounded-lg p-4 bg-slate-900/40 relative overflow-hidden">
+                                    <div className="absolute top-0 right-0 w-24 h-24 translate-x-6 -translate-y-6 bg-indigo-500/5 rounded-full blur-xl pointer-events-none" />
+
+                                    <div className="flex items-start gap-3 mb-3">
+                                        <div className="shrink-0 flex items-center justify-center w-6 h-6 rounded-full bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 font-bold text-xs mt-0.5">
+                                            #{h.rank}
+                                        </div>
+                                        <div>
+                                            <h5 className="text-sm font-bold text-white leading-snug">{h.probable_root_cause}</h5>
+                                            <p className="text-[10px] text-amber-400/90 font-semibold mt-1 font-mono uppercase tracking-wide">
+                                                Confidence Factor: {Math.round(h.confidence_score * 100)}%
+                                            </p>
+                                        </div>
+                                    </div>
+
+                                    <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4 border-t border-slate-800/60 pt-3">
+                                        <div>
+                                            <p className="text-[11px] font-semibold text-indigo-300 uppercase tracking-wider mb-2">Supporting Evidence</p>
+                                            <ul className="space-y-1.5">
+                                                {(h.supporting_evidence || []).map((ev: string, idx: number) => (
+                                                    <li key={idx} className="flex gap-2 text-xs text-slate-300">
+                                                        <span className="text-indigo-400 font-mono mt-0.5">•</span>
+                                                        <span>{ev}</span>
+                                                    </li>
+                                                ))}
+                                            </ul>
+                                        </div>
+                                        <div className="bg-slate-950/45 p-3 rounded-lg border border-slate-800/40">
+                                            <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-1.5">Alternative Rejection Logic</p>
+                                            <p className="text-xs text-slate-450 leading-relaxed italic">{h.alternative_rejected_reason}</p>
+                                        </div>
+                                    </div>
+
+                                    {h.recommended_remediations && h.recommended_remediations.length > 0 && (
+                                        <div className="mt-4 border-t border-slate-800/60 pt-3">
+                                            <p className="text-[11px] font-semibold text-emerald-400 uppercase tracking-wider mb-2 font-mono">Cause-Specific Remediation Paths</p>
+                                            <div className="space-y-2">
+                                                {h.recommended_remediations.map((rem: any, idx: number) => (
+                                                    <div key={idx} className="bg-emerald-500/5 border border-emerald-500/10 rounded p-2.5 flex flex-col gap-1.5">
+                                                        <div className="flex items-center justify-between">
+                                                            <span className="text-[10px] font-bold text-emerald-400 uppercase tracking-wide px-1.5 py-0.5 rounded bg-emerald-500/15 border border-emerald-500/25">
+                                                                {rem.action_type}
+                                                            </span>
+                                                            <span className="text-[9px] text-slate-500">Risk: {rem.risk_level}</span>
+                                                        </div>
+                                                        <p className="text-xs text-slate-300">{rem.description}</p>
+                                                        {rem.command_or_code && (
+                                                            <pre className="text-[10px] font-mono bg-black/40 border border-slate-800 rounded p-1.5 overflow-x-auto text-cyan-300 mt-1">
+                                                                {rem.command_or_code}
+                                                            </pre>
+                                                        )}
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            ))}
+                        </div>
+
+                        {((hypothesis as any).key_assumptions || []).length > 0 && (
+                            <div className="border-t border-slate-805 pt-4">
+                                <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Incident Key Assumptions</h4>
+                                <ul className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                    {((hypothesis as any).key_assumptions || []).map((a: string, i: number) => (
                                         <li key={i} className="flex gap-2 text-xs text-slate-400">
-                                            <span className="shrink-0 text-slate-600">—</span> {a}
+                                            <span className="text-slate-600">—</span>
+                                            <span>{a}</span>
                                         </li>
                                     ))}
                                 </ul>
                             </div>
-                        </div>
+                        )}
                     </div>
                 </Collapsible>
             )}

@@ -136,16 +136,26 @@ def run_report_agent(state: IncidentState) -> Dict[str, Any]:
     hypothesis: HypothesisOutput = state.get("hypothesis")
     recommendations: List[RecommendedAction] = state.get("recommendations", [])
     
-    # If recommendations aren't set yet (since recommender agent is a placeholder), generate a default one
-    if not recommendations:
-         recommendations = [
-             RecommendedAction(
-                 action_type="CONFIG",
-                 description="Adjust connection timeout limits and roll back recent configuration variations.",
-                 command_or_code="kubectl rollout undo deployment/rootsight-app",
-                 risk_level="LOW"
-             )
-         ]
+    # Extract remediations from the top hypothesis if available
+    cause_remediations = []
+    if hypothesis and hypothesis.top_hypotheses:
+        cause_remediations = hypothesis.top_hypotheses[0].recommended_remediations
+        
+    # Combine lists
+    all_recommendations = list(recommendations)
+    for rec in cause_remediations:
+        if not any(r.description == rec.description for r in all_recommendations):
+            all_recommendations.append(rec)
+            
+    if not all_recommendations:
+        all_recommendations = [
+            RecommendedAction(
+                action_type="CONFIG",
+                description="Adjust connection timeout limits and roll back recent configuration variations.",
+                command_or_code="kubectl rollout undo deployment/rootsight-app",
+                risk_level="LOW"
+            )
+        ]
          
     # Build ReportJSON
     report_json = ReportJSON(
@@ -155,10 +165,13 @@ def run_report_agent(state: IncidentState) -> Dict[str, Any]:
         analysis_completed_at=datetime.now(),
         evidence_summary=evidence,
         hypothesis=hypothesis,
-        remediation_recommendations=recommendations
+        remediation_recommendations=all_recommendations
     )
     
-    # Build markdown report
+    # Build senior SRE styled markdown report
+    top_cause_desc = hypothesis.top_hypotheses[0].probable_root_cause if hypothesis.top_hypotheses else "Unknown"
+    top_confidence = f"{int(hypothesis.top_hypotheses[0].confidence_score * 100)}%" if hypothesis.top_hypotheses else "0%"
+    
     md = f"""# ROOTCAUSE INCIDENT REPORT: {report_json.title.upper()}
 **Incident ID:** `{report_json.incident_id}`
 **Generated:** `{report_json.analysis_completed_at.strftime('%Y-%m-%d %H:%M:%S')}`
@@ -169,19 +182,33 @@ def run_report_agent(state: IncidentState) -> Dict[str, Any]:
 ## 1. Executive Summary
 The system has completed an automated incident investigation workflow using LangGraph orchestration.
 
-### Root Cause Hypothesis (LLM Synthesized)
-- **Probable Cause:** {hypothesis.probable_root_cause}
-- **Confidence Score:** `{report_json.hypothesis.confidence_score * 100}%`
+### SRE Overview Summary
+{hypothesis.sre_summary}
 
-### Reasoning Details
-{chr(10).join(f'- {r}' for r in hypothesis.reasoning)}
-
-### Assumptions Made
-{chr(10).join(f'- {a}' for a in hypothesis.assumptions)}
+### Primary Root Cause Hypothesis
+- **Probable Cause:** {top_cause_desc}
+- **Confidence Score:** `{top_confidence}`
 
 ---
 
-## 2. Chronological Timeline
+## 2. Ranked Hypotheses Analysis
+"""
+    for h in hypothesis.top_hypotheses:
+        md += f"### Rank #{h.rank}: {h.probable_root_cause}\n"
+        md += f"- **Confidence Level:** `{int(h.confidence_score * 100)}%`\n"
+        md += "- **Supporting Evidence:**\n"
+        for ev in h.supporting_evidence:
+            md += f"  * {ev}\n"
+        md += f"- **Alternative Hypothesis Rejection Logic:** {h.alternative_rejected_reason}\n\n"
+
+    md += "\n### Operational Key Assumptions\n"
+    for a in hypothesis.key_assumptions:
+        md += f"- {a}\n"
+
+    md += """
+---
+
+## 3. Chronological Timeline
 | Time | Source | Severity | Event Description |
 | :--- | :--- | :--- | :--- |
 """
@@ -190,8 +217,8 @@ The system has completed an automated incident investigation workflow using Lang
         sources_str = ", ".join(item.sources)
         md += f"| {time_str} | {sources_str} | `{item.impact_level}` | {item.description} |\n"
 
-    md += "\n## 3. Recommended Remediation Actions\n"
-    for idx, rec in enumerate(recommendations, 1):
+    md += "\n## 4. Recommended Remediation Actions\n"
+    for idx, rec in enumerate(all_recommendations, 1):
         md += f"### Action #{idx}: {rec.action_type} (Risk: `{rec.risk_level}`)\n"
         md += f"- **Description:** {rec.description}\n"
         if rec.command_or_code:
@@ -199,7 +226,7 @@ The system has completed an automated incident investigation workflow using Lang
 
     return {
         "report_json": report_json,
-        "recommendations": recommendations,
+        "recommendations": all_recommendations,
         "markdown_report": md,
         "status": "COMPLETED"
     }

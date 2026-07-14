@@ -71,11 +71,18 @@ class CorrelationEvidenceMap(BaseModel):
     grouped_findings: List[AnalysisFinding] = Field(default_factory=list, description="All parsed findings across modules")
     events_timeline: List[CorrelatedEvidence] = Field(default_factory=list, description="Chronological log and metrics intersections")
 
+class HypothesisItem(BaseModel):
+    rank: int = Field(..., description="1, 2, or 3 ranking of probability")
+    probable_root_cause: str = Field(..., description="Detailed description of the hypothesis")
+    confidence_score: float = Field(..., description="Confidence score from 0.0 to 1.0")
+    supporting_evidence: List[str] = Field(..., description="Exact observations from specific agents supporting this hypothesis")
+    alternative_rejected_reason: str = Field(..., description="Why this hypothesis is favored over others, or why alternative hypotheses are rejected")
+    recommended_remediations: List[RecommendedAction] = Field(default_factory=list, description="Actions directly targeted to address this specific cause")
+
 class HypothesisOutput(BaseModel):
-    probable_root_cause: str = Field(..., description="LLM reasoned probable cause")
-    confidence_score: float = Field(..., description="Confidence fraction between 0.0 and 1.0")
-    reasoning: List[str] = Field(default_factory=list, description="Step-by-step logic chains")
-    assumptions: List[str] = Field(default_factory=list, description="Presumed facts that need verification")
+    top_hypotheses: List[HypothesisItem] = Field(..., min_items=1, max_items=3, description="Ranked list of top 3 probable root causes")
+    sre_summary: str = Field(..., description="Senior SRE synthesis summary of the incident")
+    key_assumptions: List[str] = Field(default_factory=list, description="Key SRE assumptions made during the analysis")
 
 class ReportJSON(BaseModel):
     incident_id: str = Field(..., description="Unique generated identifier")
