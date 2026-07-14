@@ -65,6 +65,27 @@ class RecommendedAction(BaseModel):
     command_or_code: Optional[str] = Field(None, description="Command to execute or code diff suggestion")
     risk_level: str = Field("LOW", description="Risk of execution (LOW, MEDIUM, HIGH)")
 
+# E2E Incident Workflow additions
+class CorrelationEvidenceMap(BaseModel):
+    timestamp_range: str = Field(..., description="Start and end window of the incident environment")
+    grouped_findings: List[AnalysisFinding] = Field(default_factory=list, description="All parsed findings across modules")
+    events_timeline: List[CorrelatedEvidence] = Field(default_factory=list, description="Chronological log and metrics intersections")
+
+class HypothesisOutput(BaseModel):
+    probable_root_cause: str = Field(..., description="LLM reasoned probable cause")
+    confidence_score: float = Field(..., description="Confidence fraction between 0.0 and 1.0")
+    reasoning: List[str] = Field(default_factory=list, description="Step-by-step logic chains")
+    assumptions: List[str] = Field(default_factory=list, description="Presumed facts that need verification")
+
+class ReportJSON(BaseModel):
+    incident_id: str = Field(..., description="Unique generated identifier")
+    title: str = Field(..., description="Incident title")
+    status: str = Field("COMPLETED")
+    analysis_completed_at: datetime = Field(default_factory=datetime.now)
+    evidence_summary: CorrelationEvidenceMap = Field(..., description="Grouped evidence details")
+    hypothesis: HypothesisOutput = Field(..., description="LLM evaluated root cause hypothesis")
+    remediation_recommendations: List[RecommendedAction] = Field(default_factory=list)
+
 # Primary Response Model
 class InvestigationReportResponse(BaseModel):
     incident_id: str = Field(..., description="Unique generated identifier for the incident investigation")
@@ -74,3 +95,9 @@ class InvestigationReportResponse(BaseModel):
     root_cause: Optional[RootCauseAnalysis] = Field(None, description="Primary root cause identification")
     recommendations: List[RecommendedAction] = Field(default_factory=list, description="Remediation and fixing instructions")
     markdown_report: str = Field(..., description="Formated, presentable markdown report of the incident")
+    
+    # E2E Additions
+    evidence: Optional[CorrelationEvidenceMap] = Field(None, description="Structured evidence object")
+    hypothesis: Optional[HypothesisOutput] = Field(None, description="Structured hypothesis evaluation")
+    report_json: Optional[ReportJSON] = Field(None, description="Final structured JSON report")
+

@@ -5,7 +5,10 @@ from app.api.schemas import (
     AnalysisFinding,
     CorrelatedEvidence,
     RootCauseAnalysis,
-    RecommendedAction
+    RecommendedAction,
+    CorrelationEvidenceMap,
+    HypothesisOutput,
+    ReportJSON
 )
 
 class IncidentState(TypedDict):
@@ -29,6 +32,11 @@ class IncidentState(TypedDict):
     timeline: List[CorrelatedEvidence]
     root_cause: Optional[RootCauseAnalysis]
     recommendations: List[RecommendedAction]
+    
+    # E2E Additions
+    evidence: Optional[CorrelationEvidenceMap]
+    hypothesis: Optional[HypothesisOutput]
+    report_json: Optional[ReportJSON]
     
     # Final Presentation output
     markdown_report: str

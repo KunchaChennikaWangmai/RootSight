@@ -17,9 +17,8 @@ from app.agents.analysts import (
 )
 from app.agents.synthesis import (
     run_correlation_agent,
-    run_rca_agent,
-    run_recommender_agent,
-    run_report_generator_agent
+    run_hypothesis_agent,
+    run_report_agent
 )
 
 # Standard LangGraph logic (Conceptual & execution compatible)
@@ -51,6 +50,11 @@ def run_incident_investigation(incident_id: str, payload: IncidentPayload) -> In
         "root_cause": None,
         "recommendations": [],
         "markdown_report": "",
+        
+        # E2E Added State Targets
+        "evidence": None,
+        "hypothesis": None,
+        "report_json": None,
         "status": "IN_PROGRESS"
     }
 
@@ -61,77 +65,70 @@ def run_incident_investigation(incident_id: str, payload: IncidentPayload) -> In
         # Add Nodes
         workflow.add_node("planner", run_planner_agent)
         workflow.add_node("log_analysis", run_log_analyst_agent)
+        
+        # Placeholders for future modules (not participating in active chains yet)
         workflow.add_node("stack_analysis", run_stack_analyst_agent)
         workflow.add_node("metrics_analysis", run_metrics_analyst_agent)
         workflow.add_node("deployment_analysis", run_deploy_analyst_agent)
+        
+        # Core active nodes
         workflow.add_node("correlation", run_correlation_agent)
-        workflow.add_node("rca", run_rca_agent)
-        workflow.add_node("recommendations", run_recommender_agent)
-        workflow.add_node("report_generation", run_report_generator_agent)
+        workflow.add_node("hypothesis", run_hypothesis_agent)
+        workflow.add_node("report_generation", run_report_agent)
         
         # Add Edges (Planner parses and routes execution)
         workflow.add_edge(START, "planner")
         
         # Conditional routers from Planner
         def route_planner(state: IncidentState):
-            # Returns a list of target node names based on active schedules
-            return state["agents_to_run"]
+            # Only execute log_analysis or bypass stack/metrics/deployment for now
+            destinations = []
+            if "log_analysis" in state["agents_to_run"]:
+                destinations.append("log_analysis")
+            # If nothing matches, go directly to correlation
+            if not destinations:
+                destinations.append("correlation")
+            return destinations
             
         workflow.add_conditional_edges(
             "planner",
             route_planner,
             {
                 "log_analysis": "log_analysis",
-                "stack_analysis": "stack_analysis",
-                "metrics_analysis": "metrics_analysis",
-                "deployment_analysis": "deployment_analysis"
+                "correlation": "correlation"
             }
         )
         
-        # Analysts merge into Evidence Correlation Node
+        # Active analytical chains connect to Evidence Correlation Node
         workflow.add_edge("log_analysis", "correlation")
-        workflow.add_edge("stack_analysis", "correlation")
-        workflow.add_edge("metrics_analysis", "correlation")
-        workflow.add_edge("deployment_analysis", "correlation")
         
-        # Synthesis Pipeline Flow
-        workflow.add_edge("correlation", "rca")
-        workflow.add_edge("rca", "recommendations")
-        workflow.add_edge("recommendations", "report_generation")
+        # E2E graph timeline pipeline
+        workflow.add_edge("correlation", "hypothesis")
+        workflow.add_edge("hypothesis", "report_generation")
         workflow.add_edge("report_generation", END)
         
         # Compile graph and invoke it
         app_graph = workflow.compile()
         final_state = app_graph.invoke(state)
     else:
-        # Fallback executor matching identical LangGraph graph execution sequentially
+        # Fallback executor matching sequential graph flow
         # Step 1: Run Planner
         new_vars = run_planner_agent(state)
         state.update(new_vars)
         
-        # Step 2: Run active scheduled analysts
+        # Step 2: Run active scheduled analysts (only LogAnalysisAgent is active)
         if "log_analysis" in state["agents_to_run"]:
             res = run_log_analyst_agent(state)
             state["findings"] = res["findings"]
-        if "stack_analysis" in state["agents_to_run"]:
-            res = run_stack_analyst_agent(state)
-            state["findings"] = res["findings"]
-        if "metrics_analysis" in state["agents_to_run"]:
-            res = run_metrics_analyst_agent(state)
-            state["findings"] = res["findings"]
-        if "deployment_analysis" in state["agents_to_run"]:
-            res = run_deploy_analyst_agent(state)
-            state["findings"] = res["findings"]
             
-        # Step 3: Run Correlation Pipeline
+        # Step 3: Run E2E Correlation -> Hypothesis -> Report pipeline
         state.update(run_correlation_agent(state))
-        state.update(run_rca_agent(state))
-        state.update(run_recommender_agent(state))
-        state.update(run_report_generator_agent(state))
+        state.update(run_hypothesis_agent(state))
+        state.update(run_report_agent(state))
         
         final_state = state
 
-    # Map the final LangGraph state to standard Investigation API Schema
+    # Map the final state to the response model
     return InvestigationReportResponse(
         incident_id=final_state["incident_id"],
         status=final_state["status"],
@@ -139,5 +136,10 @@ def run_incident_investigation(incident_id: str, payload: IncidentPayload) -> In
         timeline=final_state["timeline"],
         root_cause=final_state["root_cause"],
         recommendations=final_state["recommendations"],
-        markdown_report=final_state["markdown_report"]
+        markdown_report=final_state["markdown_report"],
+        
+        # E2E Added structured fields
+        evidence=final_state["evidence"],
+        hypothesis=final_state["hypothesis"],
+        report_json=final_state["report_json"]
     )
