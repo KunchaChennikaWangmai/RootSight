@@ -38,6 +38,7 @@ const FILE_SLOTS: SlotConfig[] = [
         hint: '.txt — Thread dump, crash traceback',
         accept: '.txt,text/plain',
         color: 'purple',
+        required: true,
     },
     {
         id: 'metrics',
@@ -45,6 +46,7 @@ const FILE_SLOTS: SlotConfig[] = [
         hint: '.json — CPU, memory, latency time-series',
         accept: '.json,application/json',
         color: 'amber',
+        required: true,
     },
     {
         id: 'deployment',
@@ -52,6 +54,7 @@ const FILE_SLOTS: SlotConfig[] = [
         hint: '.json — Environment config, release version',
         accept: '.json,application/json',
         color: 'teal',
+        required: true,
     },
 ];
 
@@ -104,6 +107,15 @@ export default function UploadPage() {
         e.preventDefault();
         if (!title.trim()) return;
         setError(null);
+
+        // Pre-submission validation: ensure all 4 files are present
+        const missingSlots = FILE_SLOTS.filter(slot => slot.required && !files[slot.id]);
+        if (missingSlots.length > 0) {
+            const errorMsg = `Validation Error: Please upload all four required files. Missing: ${missingSlots.map(s => s.label).join(', ')}`;
+            setError(errorMsg);
+            return;
+        }
+
         setProgress(10);
 
         try {
@@ -128,7 +140,20 @@ export default function UploadPage() {
             if (files.deployment) {
                 setProgress(70);
                 const text = await readFile(files.deployment);
-                payload.deployment = JSON.parse(text);
+                const parsed = JSON.parse(text);
+                // Schema alignment: ensure all fields match DeploymentArtifact exactly
+                payload.deployment = {
+                    filename: files.deployment.name,
+                    environment: parsed.environment || 'production',
+                    version: parsed.version || 'unknown',
+                    config_vars: parsed.config_vars || {},
+                    deployed_at: parsed.deployed_at || new Date().toISOString()
+                };
+            }
+
+            // Log outgoing request payload in development mode
+            if ((import.meta as any).env?.DEV) {
+                console.log('[DEBUG] Outgoing IncidentPayload:', payload);
             }
 
             setProgress(85);
@@ -247,6 +272,31 @@ export default function UploadPage() {
                         })}
                     </div>
                 </div>
+
+                {/* Selected Files Summary */}
+                {Object.keys(files).length > 0 && (
+                    <div className="glass-card p-4 space-y-2">
+                        <h3 className="text-xs font-semibold text-slate-400">Selected Filenames</h3>
+                        <ul className="text-xs space-y-1">
+                            {FILE_SLOTS.map((slot) => {
+                                const file = files[slot.id];
+                                return file ? (
+                                    <li key={slot.id} className="flex justify-between items-center text-slate-300">
+                                        <span className="font-medium text-slate-400">{slot.label}:</span>
+                                        <span className="font-mono text-emerald-400 bg-emerald-500/5 px-2 py-0.5 rounded border border-emerald-500/10 truncate max-w-[250px]">
+                                            {file.name}
+                                        </span>
+                                    </li>
+                                ) : (
+                                    <li key={slot.id} className="flex justify-between items-center text-slate-500">
+                                        <span>{slot.label}:</span>
+                                        <span className="italic text-red-400/80">Missing</span>
+                                    </li>
+                                );
+                            })}
+                        </ul>
+                    </div>
+                )}
 
                 {/* Progress bar */}
                 <AnimatePresence>

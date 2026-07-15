@@ -74,14 +74,36 @@ export interface InvestigationReportResponse {
     report_json?: ReportJSON;
 }
 
+export interface MetricPoint {
+    timestamp: string;
+    cpu_percent?: number | null;
+    memory_percent?: number | null;
+    latency_ms?: number | null;
+    error_rate?: number | null;
+    custom_metrics?: Record<string, any>;
+}
+
+export interface MetricsArtifact {
+    filename: string;
+    data: MetricPoint[];
+}
+
+export interface DeploymentArtifact {
+    filename: string;
+    environment: string;
+    version: string;
+    config_vars: Record<string, string>;
+    deployed_at: string;
+}
+
 // Upload payload types
 export interface IncidentPayload {
     title: string;
     description?: string;
     logs?: { filename: string; content: string };
     stack_trace?: { filename: string; content: string };
-    metrics?: { filename: string; data: object[] };
-    deployment?: object;
+    metrics?: MetricsArtifact;
+    deployment?: DeploymentArtifact;
 }
 
 // Dashboard list item

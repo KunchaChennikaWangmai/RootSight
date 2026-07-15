@@ -96,88 +96,90 @@ def call_hypothesis_llm(evidence: InvestigationEvidence) -> HypothesisOutput:
     print(f"python-dotenv package available: {HAS_DOTENV}")
     print(f"google-generativeai package available: {HAS_GENAI}")
     print(f"GEMINI_API_KEY detected in env variables: {bool(api_key)}")
-    if not api_key:
-        print("Reason: GEMINI_API_KEY is not present in local process environment or loaded dotenv files.")
-        print("Action: Falling back to local heuristic SRE engine as Gemini is genuinely unavailable.")
     
-    if HAS_GENAI and api_key:
-        # Initialize Google GenAI
-        try:
-            print("Action: Configuring Google GenAI connection...")
-            genai.configure(api_key=api_key)
-            print("Status: Google GenAI initialization successful.")
-        except Exception as init_err:
-            print("Error: Exception thrown during Gemini initialization!")
-            traceback.print_exc()
-            raise init_err
+    # 1. Print whether Gemini API is invoked
+    print("Status: Gemini API is being formally invoked.")
+    
+    # 2. Print whether execution falls back to the heuristic engine
+    print("Status: Heuristic fallback engine is TEMPORARILY DISABLED. Direct path to Gemini API is strictly enforced.")
 
-        # Verify model name and issue API Request
-        try:
-            model_name = 'gemini-2.0-flash-lite'
-            print(f"Action: Initializing generative model '{model_name}'...")
-            model = genai.GenerativeModel(model_name)
-            
-            # Print Payload length and first lines
-            print(f"Action: Sending request payload to Gemini API (length={len(prompt)} chars)...")
-            print("--- [payload snippet] ---")
-            print(prompt[:400] + "...\n[payload details omitted for trace]\n-----------------------")
-            
-            response = model.generate_content(
-                prompt,
-                generation_config={"temperature": 0.1}
+    if not api_key:
+        error_msg = "GEMINI_API_KEY is not present in local process environment or loaded dotenv files. Since heuristic fallback is disabled, raising ValueError."
+        print(f"Error: {error_msg}")
+        raise ValueError(error_msg)
+        
+    if not HAS_GENAI:
+        error_msg = "google-generativeai package is not installed. Since heuristic fallback is disabled, raising ImportError."
+        print(f"Error: {error_msg}")
+        raise ImportError(error_msg)
+
+    # Initialize Google GenAI
+    print("Action: Configuring Google GenAI connection...")
+    genai.configure(api_key=api_key)
+    print("Status: Google GenAI initialization successful.")
+
+    # Verify model name and issue API Request
+    model_name = 'gemini-2.0-flash-lite'
+    print(f"Action: Initializing generative model '{model_name}'...")
+    model = genai.GenerativeModel(model_name)
+    
+    # Print Payload length and first lines
+    print(f"Action: Sending request payload to Gemini API (length={len(prompt)} chars)...")
+    print("--- [payload snippet] ---")
+    print(prompt[:400] + "...\n[payload details omitted for trace]\n-----------------------")
+    
+    response = model.generate_content(
+        prompt,
+        generation_config={"temperature": 0.1}
+    )
+    print("Status: Gemini API response received.")
+    text = response.text.strip()
+    print("Raw Gemini API response:")
+    print("-----------------------")
+    print(text)
+    print("-----------------------")
+    
+    # Clean possible markdown wrap ```json ... ```
+    if text.startswith("```"):
+        text = text.split("```json")[-1].split("```")[0].strip()
+    elif text.startswith("```"):
+        text = text.split("```")[-1].split("```")[0].strip()
+        
+    data = json.loads(text)
+    
+    primary = data.get("primary_hypothesis", {})
+    primary_detail = HypothesisDetail(
+        rank=1,
+        probable_root_cause=primary.get("probable_root_cause", "Unknown"),
+        confidence_score=int(primary.get("confidence_score", 50)),
+        why_this_is_likely=primary.get("why_this_is_likely", ""),
+        supporting_evidence=primary.get("supporting_evidence", []),
+        rejected_alternative_hypotheses=primary.get("rejected_alternative_hypotheses", []),
+        recommended_actions=primary.get("recommended_actions", [])
+    )
+    
+    secondaries = []
+    for idx, h in enumerate(data.get("secondary_hypotheses", [])):
+        secondaries.append(
+            HypothesisDetail(
+                rank=int(h.get("rank", idx + 2)),
+                probable_root_cause=h.get("probable_root_cause", "Unknown"),
+                confidence_score=int(h.get("confidence_score", 30)),
+                why_this_is_likely=h.get("why_this_is_likely", ""),
+                supporting_evidence=h.get("supporting_evidence", []),
+                rejected_alternative_hypotheses=h.get("rejected_alternative_hypotheses", []),
+                recommended_actions=h.get("recommended_actions", [])
             )
-            print("Status: Gemini API response received.")
-            text = response.text.strip()
-            print("Raw Gemini API response:")
-            print("-----------------------")
-            print(text)
-            print("-----------------------")
-            
-            # Clean possible markdown wrap ```json ... ```
-            if text.startswith("```"):
-                text = text.split("```json")[-1].split("```")[0].strip()
-            elif text.startswith("```"):
-                text = text.split("```")[-1].split("```")[0].strip()
-                
-            data = json.loads(text)
-            
-            primary = data.get("primary_hypothesis", {})
-            primary_detail = HypothesisDetail(
-                rank=1,
-                probable_root_cause=primary.get("probable_root_cause", "Unknown"),
-                confidence_score=int(primary.get("confidence_score", 50)),
-                why_this_is_likely=primary.get("why_this_is_likely", ""),
-                supporting_evidence=primary.get("supporting_evidence", []),
-                rejected_alternative_hypotheses=primary.get("rejected_alternative_hypotheses", []),
-                recommended_actions=primary.get("recommended_actions", [])
-            )
-            
-            secondaries = []
-            for idx, h in enumerate(data.get("secondary_hypotheses", [])):
-                secondaries.append(
-                    HypothesisDetail(
-                        rank=int(h.get("rank", idx + 2)),
-                        probable_root_cause=h.get("probable_root_cause", "Unknown"),
-                        confidence_score=int(h.get("confidence_score", 30)),
-                        why_this_is_likely=h.get("why_this_is_likely", ""),
-                        supporting_evidence=h.get("supporting_evidence", []),
-                        rejected_alternative_hypotheses=h.get("rejected_alternative_hypotheses", []),
-                        recommended_actions=h.get("recommended_actions", [])
-                    )
-                )
-                
-            result = HypothesisOutput(
-                executive_summary=data.get("executive_summary", "Outage Incident SRE Executive Summary"),
-                primary_hypothesis=primary_detail,
-                secondary_hypotheses=secondaries
-            )
-            print("Status: Successfully built HypothesisOutput and parsed Gemini JSON payload.")
-            print("========================================================\n")
-            return result
-        except Exception as call_err:
-            print("Error: Exception thrown during the Gemini API call!")
-            traceback.print_exc()
-            raise call_err
+        )
+        
+    result = HypothesisOutput(
+        executive_summary=data.get("executive_summary", "Outage Incident SRE Executive Summary"),
+        primary_hypothesis=primary_detail,
+        secondary_hypotheses=secondaries
+    )
+    print("Status: Successfully built HypothesisOutput and parsed Gemini JSON payload.")
+    print("========================================================\n")
+    return result
 
     # ==========================================
     # Heuristics Fallback Engine (Detailed SRE rules matching new schema)
